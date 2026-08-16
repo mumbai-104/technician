@@ -26,13 +26,26 @@ jobs:
           echo "Current branch: $(git branch --show-current)"
           echo "Current commit: $(git rev-parse HEAD)"
           echo ""
-          echo "Validating tracked files..."
-          if git ls-files | grep -q "lib/widgets/working_hours_widget.dart"; then
+
+          if [ -f pubspec.yaml ]; then
+            APP_DIR="."
+          else
+            found="$(find . -maxdepth 3 -type f -name pubspec.yaml | head -n 1 || true)"
+            if [ -n "$found" ]; then
+              APP_DIR="$(dirname "$found")"
+            else
+              APP_DIR="."
+            fi
+          fi
+          APP_DIR="${APP_DIR#./}"
+
+          echo "Validating tracked files in app directory: $APP_DIR"
+          if git ls-files -- "$APP_DIR/lib/widgets/working_hours_widget.dart" | grep -q .; then
             echo "✓ working_hours_widget.dart is tracked"
           else
-            echo "✗ MISSING: working_hours_widget.dart not in git tracking"
-            echo "Tracked files in lib/widgets/:"
-            git ls-files -- lib/widgets/ || echo "No files found"
+            echo "✗ MISSING: $APP_DIR/lib/widgets/working_hours_widget.dart not in git tracking"
+            echo "Tracked files in $APP_DIR/lib/widgets/:"
+            git ls-files -- "$APP_DIR/lib/widgets/" || echo "No files found"
             exit 1
           fi
 
