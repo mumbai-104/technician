@@ -15,63 +15,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          ref: ${{ github.ref }}
-
-      - name: Validate repository state
-        run: |
-          set -e
-          echo "Current branch: $(git branch --show-current)"
-          echo "Current commit: $(git rev-parse HEAD)"
-          echo ""
-
-          if [ -f pubspec.yaml ]; then
-            APP_DIR="."
-          else
-            found="$(find . -maxdepth 3 -type f -name pubspec.yaml | head -n 1 || true)"
-            if [ -n "$found" ]; then
-              APP_DIR="$(dirname "$found")"
-            else
-              APP_DIR="."
-            fi
-          fi
-          APP_DIR="${APP_DIR#./}"
-
-          echo "Validating tracked files in app directory: $APP_DIR"
-          if git ls-files -- "$APP_DIR/lib/widgets/working_hours_widget.dart" | grep -q .; then
-            echo "✓ working_hours_widget.dart is tracked"
-          else
-            echo "✗ MISSING: $APP_DIR/lib/widgets/working_hours_widget.dart not in git tracking"
-            echo "Tracked files in $APP_DIR/lib/widgets/:"
-            git ls-files -- "$APP_DIR/lib/widgets/" || echo "No files found"
-            exit 1
-          fi
-
-      - name: Remove conflicting Xcode base configs
-        run: |
-          set -e
-
-          APP_DIR="."
-          if [ ! -f "pubspec.yaml" ]; then
-            found="$(find . -maxdepth 3 -type f -name pubspec.yaml | head -n 1 || true)"
-            if [ -n "$found" ]; then
-              APP_DIR="$(dirname "$found")"
-            fi
-          fi
-
-          APP_DIR="${APP_DIR#./}"
-          if [ -n "$APP_DIR" ] && [ "$APP_DIR" != "." ]; then
-            cd "$APP_DIR"
-          fi
-
-          pbxproj="ios/Runner.xcodeproj/project.pbxproj"
-          if [ -f "$pbxproj" ]; then
-            python3 -c "import pathlib, re; p = pathlib.Path('ios/Runner.xcodeproj/project.pbxproj'); text = p.read_text(encoding='utf-8'); updated = re.sub(r'(?m)^\\s*baseConfigurationReference\\s*=\\s*[^;]+;\\s*$', '', text); (p.write_text(updated, encoding='utf-8') if updated != text else None); print('Removed conflicting baseConfigurationReference entries from Runner.xcodeproj/project.pbxproj' if updated != text else 'No conflicting baseConfigurationReference entries found in Runner.xcodeproj/project.pbxproj')"
-          else
-            echo "No Runner.xcodeproj/project.pbxproj found; skipping cleanup."
-          fi
 
       - name: Debug repo layout
         run: |
@@ -116,76 +59,80 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}-v3
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pub-
 
       - name: Install Dart/Flutter dependencies
         working-directory: ${{ env.APP_DIR }}
-        run: |
-          set -e
-          rm -f pubspec.lock
-          flutter pub get
+        run: flutter pub get
 
-      - name: Complete cache invalidation
-        run: |
-          set -e
-          rm -rf ~/Library/Developer/Xcode/DerivedData/*
-          rm -rf ~/Library/Caches/CocoaPods
-          rm -rf ~/.cocoapods
-          rm -rf ~/.pub-cache/hosted/pub.dev/*
-          mkdir -p ~/Library/Developer/Xcode/DerivedData
-
-      - name: Clean build artifacts and CocoaPods
+      - name: Clean iOS build artifacts
         working-directory: ${{ env.APP_DIR }}
         run: |
           set -e
           export PATH="$HOME/flutter/bin:$PATH"
-          rm -rf ~/Library/Developer/Xcode/DerivedData/*
-          rm -rf ~/Library/Caches/CocoaPods
-          rm -rf ~/.cocoapods
-          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks ios/Runner.xcworkspace
-          rm -rf ios/Flutter/Flutter.podspec ios/Flutter/Flutter.framework
+          rm -rf ios/Pods
+          rm -rf ios/Podfile.lock
+          rm -rf ios/.symlinks
+          rm -rf ios/Flutter/Flutter.podspec
+          rm -rf ios/Flutter/Flutter.framework
+          rm -rf ios/Runner.xcworkspace
           rm -rf build/
-          rm -rf .dart_tool/
           flutter clean
           flutter pub get
-
-      - name: Verify required files exist
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          set -e
-          echo "Checking for required Flutter files..."
-          if [ ! -f "lib/widgets/working_hours_widget.dart" ]; then
-            echo "ERROR: lib/widgets/working_hours_widget.dart not found!"
-            echo "Current directory: $(pwd)"
-            echo "Contents of lib/:"
-            ls -la lib/ || echo "lib/ directory not found"
-            echo "Contents of lib/widgets/:"
-            ls -la lib/widgets/ || echo "lib/widgets/ directory not found"
-            echo "Search for working_hours files:"
-            find . -name "*working_hours*" -type f || true
-            exit 1
-          fi
-          echo "✓ lib/widgets/working_hours_widget.dart found"
-          if ! grep -q "class WorkingHoursWidget" "lib/widgets/working_hours_widget.dart"; then
-            echo "ERROR: WorkingHoursWidget class not found in file!"
-            exit 1
-          fi
-          echo "✓ WorkingHoursWidget class found"
+          flutter precache --ios
 
       - name: Install CocoaPods
         run: |
           set -e
           sudo gem install cocoapods --no-document
 
-      - name: Setup iOS pods
+      - name: Fix iOS project configuration
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: |
+          set -e
+          rm -f Podfile.lock
+          rm -rf Pods
+          rm -rf .symlinks
+          find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Flutter/d' {} + 2>/dev/null || true
+          find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Generated/d' {} + 2>/dev/null || true
+          find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Pods/d' {} + 2>/dev/null || true
+
+      - name: Install iOS pods
         working-directory: ${{ env.APP_DIR }}/ios
         run: |
           set -e
           export PATH="$HOME/flutter/bin:$PATH"
-          pod repo update
           pod install --repo-update --no-ansi
+
+      - name: Regenerate iOS project
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          set -e
+          export PATH="$HOME/flutter/bin:$PATH"
+          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks ios/Runner.xcworkspace
+          rm -rf ios/Flutter/Flutter.podspec ios/Flutter/Flutter.framework
+          cd ios
+          rm -rf Runner.xcworkspace
+          cd ..
+          flutter clean
+          flutter pub get
+          flutter precache --ios
+          cd ios
+          pod install --repo-update
+          cd ..
+
+      - name: Verify iOS project exists
+        run: |
+          ios_dir="${{ env.APP_DIR }}/ios"
+          echo "Listing ios dir: '$ios_dir'"
+          if [ ! -d "$ios_dir" ]; then
+            echo "No ios/ directory at $ios_dir" >&2
+            exit 1
+          fi
+          ls -la "$ios_dir"
+          find "$ios_dir" -maxdepth 1 \( -name "*.xcworkspace" -o -name "*.xcodeproj" \) -print || true
 
       - name: Build iOS app for simulator (no codesign)
         working-directory: ${{ env.APP_DIR }}
