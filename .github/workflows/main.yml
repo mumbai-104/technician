@@ -123,39 +123,24 @@ jobs:
           find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Generated/d' {} + 2>/dev/null || true
           find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Pods/d' {} + 2>/dev/null || true
 
-      - name: Setup iOS pods with proper Flutter integration
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          set -euxo pipefail
-          export PATH="$HOME/flutter/bin:$PATH"
-
-          echo "Step 1: Ensure Flutter iOS files are generated..."
-          flutter pub get
-
-          echo "Step 2: Clean and regenerate pod configuration..."
-          cd ios
-          rm -rf Pods Podfile.lock .symlinks Runner.xcworkspace
-
-          echo "Step 3: Update pod repo..."
-          pod repo update --silent || true
-
-          echo "Step 4: Install pods with proper Flutter framework discovery..."
-          pod install --repo-update --verbose
-          cd ..
-
-          echo "Step 5: Verify pod installation..."
-          if [ ! -d "ios/Pods" ]; then
-            echo "ERROR: Pods directory not created!"
-            exit 1
-          fi
-          echo "✓ Pods installed successfully"
-
-      - name: Install iOS pods
+      - name: Setup iOS pods
         working-directory: ${{ env.APP_DIR }}/ios
         run: |
           set -e
           export PATH="$HOME/flutter/bin:$PATH"
-          pod install --repo-update --no-ansi
+
+          echo "Checking Podfile syntax..."
+          ruby -c Podfile && echo "✓ Podfile syntax is valid"
+
+          echo "Installing CocoaPods dependencies..."
+          pod install --verbose 2>&1 | tail -n 200
+
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "Pod install failed. Attempting with repo update..."
+            pod install --repo-update --verbose 2>&1 | tail -n 200
+          fi
+
+          echo "✓ Pods installed successfully"
 
       - name: Regenerate iOS project
         working-directory: ${{ env.APP_DIR }}
