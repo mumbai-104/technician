@@ -40,9 +40,18 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
 
     target.build_configurations.each do |config|
-      config.build_settings['FRAMEWORK_SEARCH_PATHS'] = '$(inherited) $(FLUTTER_ROOT)/bin/cache/artifacts/engine/ios'
-      config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) $(FLUTTER_ROOT)/bin/cache/artifacts/engine/ios/Flutter'
+      config.build_settings['FRAMEWORK_SEARCH_PATHS'] ||= '$(inherited)'
+      config.build_settings['FRAMEWORK_SEARCH_PATHS'] += ' "${FLUTTER_ROOT}/bin/cache/artifacts/engine/ios"'
+      config.build_settings['FRAMEWORK_SEARCH_PATHS'] += ' "${PODS_ROOT}/../Flutter"'
+      config.build_settings['FRAMEWORK_SEARCH_PATHS'] += ' "${PODS_ROOT}/../.symlinks/flutter/ios"'
+
+      config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited)'
+      config.build_settings['HEADER_SEARCH_PATHS'] += ' "${FLUTTER_ROOT}/bin/cache/artifacts/engine/ios/Flutter"'
+      config.build_settings['HEADER_SEARCH_PATHS'] += ' "${PODS_ROOT}/../Flutter"'
+      config.build_settings['HEADER_SEARCH_PATHS'] += ' "${PODS_ROOT}/../.symlinks/flutter/ios/Flutter"'
+
       config.build_settings['OTHER_LDFLAGS'] = '$(inherited)'
+      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
 
       config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
         '$(inherited)',
