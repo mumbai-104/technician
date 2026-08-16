@@ -1,0 +1,182 @@
+name: iOS Flutter CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_ios:
+    runs-on: macos-latest
+    env:
+      FLUTTER_ROOT: ${{ github.workspace }}/../flutter
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          ref: ${{ github.ref }}
+
+      - name: Validate repository state
+        run: |
+          set -e
+          echo "Current branch: $(git branch --show-current)"
+          echo "Current commit: $(git rev-parse HEAD)"
+          echo ""
+          echo "Validating tracked files..."
+          if git ls-files | grep -q "lib/widgets/working_hours_widget.dart"; then
+            echo "✓ working_hours_widget.dart is tracked"
+          else
+            echo "✗ MISSING: working_hours_widget.dart not in git tracking"
+            echo "Tracked files in lib/widgets/:"
+            git ls-files -- lib/widgets/ || echo "No files found"
+            exit 1
+          fi
+
+      - name: Remove conflicting Xcode base configs
+        run: |
+          set -e
+
+          APP_DIR="."
+          if [ ! -f "pubspec.yaml" ]; then
+            found="$(find . -maxdepth 3 -type f -name pubspec.yaml | head -n 1 || true)"
+            if [ -n "$found" ]; then
+              APP_DIR="$(dirname "$found")"
+            fi
+          fi
+
+          APP_DIR="${APP_DIR#./}"
+          if [ -n "$APP_DIR" ] && [ "$APP_DIR" != "." ]; then
+            cd "$APP_DIR"
+          fi
+
+          pbxproj="ios/Runner.xcodeproj/project.pbxproj"
+          if [ -f "$pbxproj" ]; then
+            python3 -c "import pathlib, re; p = pathlib.Path('ios/Runner.xcodeproj/project.pbxproj'); text = p.read_text(encoding='utf-8'); updated = re.sub(r'(?m)^\\s*baseConfigurationReference\\s*=\\s*[^;]+;\\s*$', '', text); (p.write_text(updated, encoding='utf-8') if updated != text else None); print('Removed conflicting baseConfigurationReference entries from Runner.xcodeproj/project.pbxproj' if updated != text else 'No conflicting baseConfigurationReference entries found in Runner.xcodeproj/project.pbxproj')"
+          else
+            echo "No Runner.xcodeproj/project.pbxproj found; skipping cleanup."
+          fi
+
+      - name: Debug repo layout
+        run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          pwd
+          echo "Root contents:"
+          ls -la
+
+      - name: Detect Flutter app directory
+        id: detect_app
+        run: |
+          if [ -f pubspec.yaml ]; then
+            APP_DIR="."
+          else
+            found="$(find . -maxdepth 3 -type f -name pubspec.yaml | head -n 1 || true)"
+            if [ -z "$found" ]; then
+              echo "No pubspec.yaml found in repo (not a Flutter project?)" >&2
+              exit 1
+            fi
+            APP_DIR="$(dirname "$found")"
+          fi
+          APP_DIR="${APP_DIR#./}"
+          echo "Detected APP_DIR='$APP_DIR'"
+          echo "APP_DIR=$APP_DIR" >> $GITHUB_ENV
+
+      - name: Install Flutter from GitHub (stable)
+        run: |
+          set -euxo pipefail
+          rm -rf "$HOME/flutter" || true
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter --version
+          flutter precache --ios
+
+      - name: Setup Flutter environment
+        run: |
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter doctor -v
+
+      - name: Cache pub dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}-v3
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Install Dart/Flutter dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          set -e
+          rm -f pubspec.lock
+          flutter pub get
+
+      - name: Complete cache invalidation
+        run: |
+          set -e
+          rm -rf ~/Library/Developer/Xcode/DerivedData/*
+          rm -rf ~/Library/Caches/CocoaPods
+          rm -rf ~/.cocoapods
+          rm -rf ~/.pub-cache/hosted/pub.dev/*
+          mkdir -p ~/Library/Developer/Xcode/DerivedData
+
+      - name: Clean build artifacts and CocoaPods
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          set -e
+          export PATH="$HOME/flutter/bin:$PATH"
+          rm -rf ~/Library/Developer/Xcode/DerivedData/*
+          rm -rf ~/Library/Caches/CocoaPods
+          rm -rf ~/.cocoapods
+          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks ios/Runner.xcworkspace
+          rm -rf ios/Flutter/Flutter.podspec ios/Flutter/Flutter.framework
+          rm -rf build/
+          rm -rf .dart_tool/
+          flutter clean
+          flutter pub get
+
+      - name: Verify required files exist
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          set -e
+          echo "Checking for required Flutter files..."
+          if [ ! -f "lib/widgets/working_hours_widget.dart" ]; then
+            echo "ERROR: lib/widgets/working_hours_widget.dart not found!"
+            echo "Current directory: $(pwd)"
+            echo "Contents of lib/:"
+            ls -la lib/ || echo "lib/ directory not found"
+            echo "Contents of lib/widgets/:"
+            ls -la lib/widgets/ || echo "lib/widgets/ directory not found"
+            echo "Search for working_hours files:"
+            find . -name "*working_hours*" -type f || true
+            exit 1
+          fi
+          echo "✓ lib/widgets/working_hours_widget.dart found"
+          if ! grep -q "class WorkingHoursWidget" "lib/widgets/working_hours_widget.dart"; then
+            echo "ERROR: WorkingHoursWidget class not found in file!"
+            exit 1
+          fi
+          echo "✓ WorkingHoursWidget class found"
+
+      - name: Install CocoaPods
+        run: |
+          set -e
+          sudo gem install cocoapods --no-document
+
+      - name: Setup iOS pods
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: |
+          set -e
+          export PATH="$HOME/flutter/bin:$PATH"
+          pod repo update
+          pod install --repo-update --no-ansi
+
+      - name: Build iOS app for simulator (no codesign)
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          set -e
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter build ios --no-codesign --simulator -v
