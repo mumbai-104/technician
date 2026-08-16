@@ -99,6 +99,23 @@ jobs:
           find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Generated/d' {} + 2>/dev/null || true
           find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Pods/d' {} + 2>/dev/null || true
 
+      - name: Clean CocoaPods and regenerate
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          set -euxo pipefail
+          echo "Cleaning CocoaPods cache and Xcode derived data..."
+          rm -rf ios/Pods
+          rm -rf ios/Podfile.lock
+          rm -rf ios/.symlinks
+          rm -rf ~/.cocoapods
+          rm -rf ~/Library/Developer/Xcode/DerivedData
+          rm -rf ~/.cocoapods/repos/trunk/tree_metadata.json || true
+
+          echo "Regenerating pod configuration..."
+          cd ios
+          pod install --repo-update --no-ansi
+          cd ..
+
       - name: Install iOS pods
         working-directory: ${{ env.APP_DIR }}/ios
         run: |
