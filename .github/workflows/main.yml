@@ -65,7 +65,14 @@ jobs:
 
       - name: Install Dart/Flutter dependencies
         working-directory: ${{ env.APP_DIR }}
-        run: flutter pub get
+        run: |
+          set -e
+          export PATH="$HOME/flutter/bin:$PATH"
+          rm -f pubspec.lock
+          flutter pub get
+          rm -rf ios/Pods
+          rm -rf ios/Podfile.lock
+          rm -rf ios/.symlinks
 
       - name: Clean iOS build artifacts
         working-directory: ${{ env.APP_DIR }}
