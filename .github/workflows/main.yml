@@ -81,6 +81,17 @@ jobs:
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 13.0/IPHONEOS_DEPLOYMENT_TARGET = 14.0/g' ios/Runner.xcodeproj/project.pbxproj
           grep -n "IPHONEOS_DEPLOYMENT_TARGET" ios/Runner.xcodeproj/project.pbxproj || true
 
+      - name: Ensure Podfile is locked to iOS 14.0
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: |
+          set -e
+          if grep -q "^platform :ios, '14.0'" Podfile; then
+            echo "Podfile already targets iOS 14.0"
+          else
+            ruby -e "path = 'Podfile'; text = File.read(path); text.sub!(/platform\s+:ios,\s*['\"][^'\"]+['\"]/, \"platform :ios, '14.0'\"); File.write(path, text)"
+          fi
+          grep -n "platform :ios" Podfile
+
       - name: Clean iOS build artifacts
         working-directory: ${{ env.APP_DIR }}
         run: |
