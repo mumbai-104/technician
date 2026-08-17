@@ -47,6 +47,28 @@ jobs:
           export PATH="$HOME/flutter/bin:$PATH"
           flutter doctor -v
 
+      - name: Ensure iOS Podfile targets iOS 14.0
+        working-directory: ${{ env.APP_DIR }}/ios
+        run: |
+          set -e
+          echo "Updating Podfile platform target..."
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          
+          path = Path('Podfile')
+          text = path.read_text()
+          
+          if re.search(r"^platform\s+:ios", text, re.MULTILINE):
+              text = re.sub(r"^platform\s+:ios.*$", "platform :ios, '14.0'", text, count=1, flags=re.MULTILINE)
+          else:
+              text = "platform :ios, '14.0'\n" + text
+          
+          path.write_text(text)
+          print("Podfile updated successfully")
+          PY
+          grep -n "^platform :ios" Podfile
+
       - name: Cache pub dependencies
         uses: actions/cache@v4
         with:
@@ -55,7 +77,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pub-
 
-      - name: Clean and setup iOS directory
+      - name: Clean iOS directory
         working-directory: ${{ env.APP_DIR }}
         run: |
           set -e
@@ -86,29 +108,9 @@ jobs:
         working-directory: ${{ env.APP_DIR }}/ios
         run: |
           set -e
-          export PATH="$HOME/flutter/bin:$PATH"
-
-          echo "Ensuring Podfile targets iOS 14.0..."
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          path = Path('Podfile')
-          text = path.read_text()
-
-          if re.search(r"^platform\s+:ios", text, re.MULTILINE):
-              text = re.sub(r"^platform\s+:ios.*$", "platform :ios, '14.0'", text, count=1, flags=re.MULTILINE)
-          else:
-              text = "platform :ios, '14.0'\n" + text
-
-          path.write_text(text)
-          PY
-
-          grep -n "^platform :ios" Podfile
-
           echo "Checking Podfile syntax..."
           ruby -c Podfile && echo "✓ Podfile syntax is valid"
-
+          
           echo "Installing CocoaPods dependencies..."
           pod install --repo-update
 
