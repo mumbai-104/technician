@@ -59,12 +59,10 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         run: |
           set -e
-          # Ensure iOS directory and Podfile exist
           if [ ! -d "ios" ]; then
             echo "ERROR: ios/ directory not found" >&2
             exit 1
           fi
-          # Remove generated artifacts
           rm -rf ios/Pods ios/Podfile.lock ios/.symlinks ios/Runner.xcworkspace
           rm -rf ios/Flutter/Flutter.podspec ios/Flutter/engine_flutter.podspec
           rm -rf ios/Flutter/Flutter.framework
@@ -89,10 +87,28 @@ jobs:
         run: |
           set -e
           export PATH="$HOME/flutter/bin:$PATH"
-          
+
+          echo "Ensuring Podfile targets iOS 14.0..."
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('Podfile')
+          text = path.read_text()
+
+          if re.search(r"^platform\s+:ios", text, re.MULTILINE):
+              text = re.sub(r"^platform\s+:ios.*$", "platform :ios, '14.0'", text, count=1, flags=re.MULTILINE)
+          else:
+              text = "platform :ios, '14.0'\n" + text
+
+          path.write_text(text)
+          PY
+
+          grep -n "^platform :ios" Podfile
+
           echo "Checking Podfile syntax..."
           ruby -c Podfile && echo "✓ Podfile syntax is valid"
-          
+
           echo "Installing CocoaPods dependencies..."
           pod install --repo-update
 
