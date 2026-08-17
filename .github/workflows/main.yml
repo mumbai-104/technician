@@ -16,13 +16,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Debug repo layout
-        run: |
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
-          pwd
-          echo "Root contents:"
-          ls -la
-
       - name: Detect Flutter app directory
         id: detect_app
         run: |
@@ -37,7 +30,6 @@ jobs:
             APP_DIR="$(dirname "$found")"
           fi
           APP_DIR="${APP_DIR#./}"
-          echo "Detected APP_DIR='$APP_DIR'"
           echo "APP_DIR=$APP_DIR" >> $GITHUB_ENV
 
       - name: Install Flutter from GitHub (stable)
@@ -63,48 +55,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pub-
 
+      - name: Clean and setup iOS directory
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          set -e
+          # Ensure iOS directory and Podfile exist
+          if [ ! -d "ios" ]; then
+            echo "ERROR: ios/ directory not found" >&2
+            exit 1
+          fi
+          # Remove generated artifacts
+          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks ios/Runner.xcworkspace
+          rm -rf ios/Flutter/Flutter.podspec ios/Flutter/engine_flutter.podspec
+          rm -rf ios/Flutter/Flutter.framework
+          rm -rf build/
+
       - name: Install Dart/Flutter dependencies
         working-directory: ${{ env.APP_DIR }}
         run: |
           set -e
           export PATH="$HOME/flutter/bin:$PATH"
           rm -f pubspec.lock
-          flutter pub get
-          rm -rf ios/Pods
-          rm -rf ios/Podfile.lock
-          rm -rf ios/.symlinks
-
-      - name: Update iOS deployment target
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          set -e
-          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 13.0/IPHONEOS_DEPLOYMENT_TARGET = 14.0/g' ios/Runner.xcodeproj/project.pbxproj
-          grep -n "IPHONEOS_DEPLOYMENT_TARGET" ios/Runner.xcodeproj/project.pbxproj || true
-
-      - name: Ensure Podfile is locked to iOS 14.0
-        working-directory: ${{ env.APP_DIR }}/ios
-        run: |
-          set -e
-          if grep -q "^platform :ios, '14.0'" Podfile; then
-            echo "Podfile already targets iOS 14.0"
-          else
-            ruby -e "path = 'Podfile'; text = File.read(path); text.sub!(/platform\s+:ios,\s*['\"][^'\"]+['\"]/, \"platform :ios, '14.0'\"); File.write(path, text)"
-          fi
-          grep -n "platform :ios" Podfile
-
-      - name: Clean iOS build artifacts
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          set -e
-          export PATH="$HOME/flutter/bin:$PATH"
-          rm -rf ios/Pods
-          rm -rf ios/Podfile.lock
-          rm -rf ios/.symlinks
-          rm -rf ios/Flutter/Flutter.podspec
-          rm -rf ios/Flutter/Flutter.framework
-          rm -rf ios/Runner.xcworkspace
-          rm -rf build/
-          flutter clean
           flutter pub get
           flutter precache --ios
 
@@ -113,82 +84,31 @@ jobs:
           set -e
           sudo gem install cocoapods --no-document
 
-      - name: Regenerate Flutter iOS build files
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          set -euxo pipefail
-          export PATH="$HOME/flutter/bin:$PATH"
-
-          echo "Regenerating Flutter iOS build support files..."
-          rm -rf ios/Flutter/Flutter.podspec
-          rm -rf ios/Flutter/engine_flutter.podspec
-          rm -rf ios/Runner.xcworkspace
-          rm -rf ios/Pods
-          rm -rf ios/Podfile.lock
-          rm -rf ios/.symlinks
-
-          flutter pub get
-          flutter precache --ios || true
-
-      - name: Fix iOS project configuration
-        working-directory: ${{ env.APP_DIR }}/ios
-        run: |
-          set -e
-          rm -f Podfile.lock
-          rm -rf Pods
-          rm -rf .symlinks
-          find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Flutter/d' {} + 2>/dev/null || true
-          find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Generated/d' {} + 2>/dev/null || true
-          find . -name "*.xcconfig" ! -path "./Pods/*" -type f -exec sed -i '' '/#include.*Pods/d' {} + 2>/dev/null || true
-
-      - name: Setup iOS pods
+      - name: Install iOS pods
         working-directory: ${{ env.APP_DIR }}/ios
         run: |
           set -e
           export PATH="$HOME/flutter/bin:$PATH"
-
+          
           echo "Checking Podfile syntax..."
           ruby -c Podfile && echo "✓ Podfile syntax is valid"
-
+          
           echo "Installing CocoaPods dependencies..."
-          pod install --verbose 2>&1 | tail -n 200
-
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "Pod install failed. Attempting with repo update..."
-            pod install --repo-update --verbose 2>&1 | tail -n 200
-          fi
-
-          echo "✓ Pods installed successfully"
-
-      - name: Regenerate iOS project
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          set -e
-          export PATH="$HOME/flutter/bin:$PATH"
-          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks ios/Runner.xcworkspace
-          rm -rf ios/Flutter/Flutter.podspec ios/Flutter/Flutter.framework
-          cd ios
-          rm -rf Runner.xcworkspace
-          cd ..
-          flutter clean
-          flutter pub get
-          flutter precache --ios
-          cd ios
           pod install --repo-update
-          cd ..
 
-      - name: Verify iOS project exists
+      - name: Verify iOS project
         run: |
           ios_dir="${{ env.APP_DIR }}/ios"
-          echo "Listing ios dir: '$ios_dir'"
           if [ ! -d "$ios_dir" ]; then
-            echo "No ios/ directory at $ios_dir" >&2
+            echo "ERROR: No ios/ directory at $ios_dir" >&2
             exit 1
           fi
-          ls -la "$ios_dir"
-          find "$ios_dir" -maxdepth 1 \( -name "*.xcworkspace" -o -name "*.xcodeproj" \) -print || true
+          if [ ! -d "$ios_dir/Runner.xcworkspace" ]; then
+            echo "ERROR: No Runner.xcworkspace generated" >&2
+            exit 1
+          fi
 
-      - name: Build iOS app for simulator (no codesign)
+      - name: Build iOS app for simulator
         working-directory: ${{ env.APP_DIR }}
         run: |
           set -e
